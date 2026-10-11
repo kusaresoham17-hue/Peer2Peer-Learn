@@ -1,0 +1,13 @@
+{
+  "name": "peer2peer-learn",
+  "version": "1.0.0",
+  "description": "Peer2Peer Learn - Peer-to-Peer Teaching Platform (Software Engineering project)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "reset": "node --disable-warning=ExperimentalWarning -e \"require('fs').rmSync('p2p.db',{force:true});require('fs').rmSync('p2p.db-wal',{force:true});require('fs').rmSync('p2p.db-shm',{force:true});console.log('Database deleted. Run npm start to recreate demo data.')\"",
+    "test": "node --disable-warning=ExperimentalWarning test/run-tests.js"
+  },
+  "engines": { "node": ">=22.5.0" },
+  "license": "MIT"
+}

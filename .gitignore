@@ -1,0 +1,4 @@
+node_modules/
+p2p.db
+p2p.db-wal
+p2p.db-shm
