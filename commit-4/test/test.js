@@ -1,0 +1,70 @@
+'use strict';
+/* Unit tests for the business logic (white-box). Run:  node test/test.js  (Node 14+, no packages needed) */
+const store = {}; const mk = () => ({ getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } });
+global.localStorage = mk(); global.sessionStorage = mk();
+const P = require('../js/core.js');
+let pass = 0, failN = 0;
+function t(name, fn) { try { fn(); pass++; console.log('  ok   ' + name); } catch (e) { failN++; console.log('  FAIL ' + name + ' -> ' + e.message); } }
+function throws(fn, text) { let m = null; try { fn(); } catch (e) { m = e.message; } if (m === null) throw new Error('expected an error'); if (text && m.indexOf(text) < 0) throw new Error('wrong error: ' + m); }
+function eq(a, b) { if (a !== b) throw new Error('expected ' + b + ' but got ' + a); }
+const day = n => { const d = new Date(Date.now() + n * 864e5); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+
+console.log('Peer2Peer Learn - unit tests');
+t('sha256 matches the standard test vector', () => eq(P.sha256('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'));
+const student = P.loginUser('student@demo.com', 'Demo@1234'), tutor = P.loginUser('tutor@demo.com', 'Demo@1234'), admin = P.loginUser('admin@demo.com', 'Demo@1234');
+t('loginUser works for the three demo accounts', () => { eq(student.role, 'student'); eq(tutor.role, 'tutor'); eq(admin.role, 'admin'); });
+t('loginUser rejects a wrong password', () => throws(() => P.loginUser('student@demo.com', 'wrong'), 'Invalid'));
+t('loginUser rejects empty fields', () => throws(() => P.loginUser('', ''), 'enter'));
+t('passwords are not stored in plain text', () => eq(P.users().some(u => u.pass === 'Demo@1234'), false));
+t('registerUser creates a new student', () => { const u = P.registerUser({ name: 'Test User', email: 'test@x.com', password: 'Abcdef12', confirm: 'Abcdef12', role: 'student' }); eq(u.role, 'student'); });
+t('registerUser rejects duplicate email', () => throws(() => P.registerUser({ name: 'Test User', email: 'test@x.com', password: 'Abcdef12', confirm: 'Abcdef12', role: 'student' }), 'already'));
+t('registerUser rejects digits in name', () => throws(() => P.registerUser({ name: 'Test123', email: 'a1@x.com', password: 'Abcdef12', confirm: 'Abcdef12', role: 'student' }), 'letters'));
+t('registerUser rejects invalid email', () => throws(() => P.registerUser({ name: 'Test', email: 'nope', password: 'Abcdef12', confirm: 'Abcdef12', role: 'student' }), 'valid email'));
+t('registerUser rejects weak password', () => throws(() => P.registerUser({ name: 'Test', email: 'w@x.com', password: 'abc', confirm: 'abc', role: 'student' }), 'Password'));
+t('registerUser rejects mismatched confirmation', () => throws(() => P.registerUser({ name: 'Test', email: 'm@x.com', password: 'Abcdef12', confirm: 'Abcdef13', role: 'student' }), 'match'));
+t('registerUser cannot create an admin', () => throws(() => P.registerUser({ name: 'Evil', email: 'e@x.com', password: 'Abcdef12', confirm: 'Abcdef12', role: 'admin' }), 'Student or Peer Tutor'));
+t('updateProfile saves changes', () => { const u = P.updateProfile(student.id, { name: 'Aisha Khan', skills: 'Python' }); eq(u.skills, 'Python'); });
+t('updateProfile rejects empty name', () => throws(() => P.updateProfile(student.id, { name: ' ' }), 'empty'));
+t('updateProfile needs the current password to change it', () => throws(() => P.updateProfile(student.id, { name: 'Aisha Khan', current_password: 'bad', new_password: 'Newpass12' }), 'incorrect'));
+t('validateZoomLink accepts zoom.us and subdomains', () => { eq(P.validateZoomLink('https://zoom.us/j/123'), true); eq(P.validateZoomLink('https://us02web.zoom.us/j/123'), true); });
+t('validateZoomLink rejects other links', () => { eq(P.validateZoomLink('http://zoom.us/j/1'), false); eq(P.validateZoomLink('https://evilzoom.us/j/1'), false); eq(P.validateZoomLink('https://example.com'), false); eq(P.validateZoomLink(''), false); });
+const myCourse = P.tutorCourses(tutor.id)[0];
+t('createCourse needs lessons to publish', () => throws(() => P.createCourse(tutor, { title: 'New Course', description: 'A valid description', category: 'Programming', difficulty: 'Beginner', publish: true, lessons: [] }), 'lesson'));
+let newId;
+t('createCourse saves a published course', () => { newId = P.createCourse(tutor, { title: 'Git Basics', description: 'Version control for beginners', category: 'Programming', difficulty: 'Beginner', duration: 4, price: 0, publish: true, lessons: [{ title: 'Intro' }] }); eq(P.courseDetail(newId, student).title, 'Git Basics'); });
+t('createCourse validates the title', () => throws(() => P.createCourse(tutor, { title: 'ab', description: 'A valid description', category: 'Programming', difficulty: 'Beginner' }), 'title'));
+t('enrollCourse enrolls a student in a free course', () => { P.enrollCourse(student.id, newId); eq(P.courseDetail(newId, student).enrolled, true); });
+t('enrollCourse blocks duplicates', () => throws(() => P.enrollCourse(student.id, newId), 'already'));
+t('enrollCourse blocks paid courses without payment', () => { const paid = P.courses({ price: 'paid' }).find(c => !P.courseDetail(c.id, student).enrolled); throws(() => P.enrollCourse(student.id, paid.id), 'paid'); });
+t('processMockPayment enrolls and returns a receipt', () => { const paid = P.courses({ price: 'paid' }).find(c => !P.courseDetail(c.id, student).enrolled); const r = P.processMockPayment(student.id, { course_id: paid.id, method: 'UPI' }); eq(r.status, 'Success'); eq(P.courseDetail(paid.id, student).enrolled, true); eq(P.generateReceipt(r.id, student.id).receipt_no.indexOf('RCPT-'), 0); });
+t('processMockPayment fails for a card ending 0000', () => { const paid = P.courses({ price: 'paid' }).find(c => !P.courseDetail(c.id, student).enrolled); throws(() => P.processMockPayment(student.id, { course_id: paid.id, method: 'Card', card: '4111111111110000' }), 'could not'); eq(P.courseDetail(paid.id, student).enrolled, false); });
+t('generateReceipt blocks other users', () => { const p = P.myPayments(student.id)[0]; const other = P.loginUser('priya@demo.com', 'Demo@1234'); throws(() => P.generateReceipt(p.id, other.id), 'Unauthorized'); });
+const zoom = 'https://zoom.us/j/99999999999';
+let sid;
+t('scheduleClass creates a class and notifies students', () => { sid = P.scheduleClass(tutor, { course_id: newId, title: 'Git live', date: day(2), start_time: '10:00', end_time: '11:00', zoom_link: zoom }); eq(P.classes(student).some(c => c.id === sid), true); });
+t('scheduleClass rejects past dates', () => throws(() => P.scheduleClass(tutor, { course_id: newId, title: 'x', date: day(-1), start_time: '10:00', end_time: '11:00', zoom_link: zoom }), 'past'));
+t('scheduleClass rejects end before start', () => throws(() => P.scheduleClass(tutor, { course_id: newId, title: 'x', date: day(2), start_time: '11:00', end_time: '10:00', zoom_link: zoom }), 'End time'));
+t('scheduleClass rejects invalid Zoom links', () => throws(() => P.scheduleClass(tutor, { course_id: newId, title: 'x', date: day(2), start_time: '10:00', end_time: '11:00', zoom_link: 'https://example.com/m' }), 'Zoom'));
+t('scheduleClass blocks other tutors', () => { const o = P.loginUser('priya@demo.com', 'Demo@1234'); throws(() => P.scheduleClass(o, { course_id: newId, title: 'x', date: day(2), start_time: '10:00', end_time: '11:00', zoom_link: zoom }), 'own courses'); });
+t('joinClass returns the stored Zoom link', () => eq(P.joinClass(student.id, sid), zoom));
+t('joinClass blocks students who are not enrolled', () => { const o = P.loginUser('neha@demo.com', 'Demo@1234'); throws(() => P.joinClass(o.id, sid), 'Unauthorized'); });
+t('joinClass rejects cancelled classes', () => { P.updateClass(tutor, sid, { status: 'cancelled' }); throws(() => P.joinClass(student.id, sid), 'cancelled'); });
+t('classStatus is computed from date and time', () => { eq(P.classStatus({ date: '2000-01-01', start_time: '10:00', end_time: '11:00', status: 'scheduled' }), 'completed'); eq(P.classStatus({ date: '2999-01-01', start_time: '10:00', end_time: '11:00', status: 'scheduled' }), 'scheduled'); });
+let aid, subId;
+t('createAssignment works for the course tutor', () => { aid = P.createAssignment(tutor, { course_id: newId, title: 'Git task', instructions: 'Make a repo', due_date: day(5), max_marks: 50 }); });
+t('submitAssignment saves a submission', () => { eq(P.submitAssignment(student.id, aid, { content: 'https://github.com/x/y' }), 'Submitted'); subId = P.tutorAssignments(tutor.id).find(a => a.id === aid).submissions[0].id; });
+t('submitAssignment blocks empty and duplicate submissions', () => { throws(() => P.submitAssignment(student.id, aid, { content: ' ' }), 'write'); throws(() => P.submitAssignment(student.id, aid, { content: 'again' }), 'already'); });
+t('evaluateAssignment validates marks', () => { throws(() => P.evaluateAssignment(tutor, subId, { marks: 51 }), 'between'); throws(() => P.evaluateAssignment(tutor, subId, { marks: '' }), 'between'); });
+t('evaluateAssignment saves marks and feedback', () => { P.evaluateAssignment(tutor, subId, { marks: 45, feedback: 'Good' }); eq(P.assignmentsFor(student.id).find(a => a.id === aid).sub.marks, 45); });
+t('sendMessage works between a student and their tutor', () => { P.sendMessage(student.id, { to_id: tutor.id, body: 'Hello' }); eq(P.thread(tutor.id, student.id).pop().body, 'Hello'); });
+t('sendMessage rejects empty messages and strangers', () => { throws(() => P.sendMessage(student.id, { to_id: tutor.id, body: '  ' }), 'empty'); const stranger = P.loginUser('neha@demo.com', 'Demo@1234'); throws(() => P.sendMessage(stranger.id, { to_id: tutor.id, body: 'hi' }), 'only message'); });
+t('submitFeedback validates rating and enrollment', () => { throws(() => P.submitFeedback(student.id, newId, { rating: 9 }), 'rating'); const o = P.loginUser('neha@demo.com', 'Demo@1234'); throws(() => P.submitFeedback(o.id, newId, { rating: 5 }), 'enrolled'); });
+t('submitFeedback saves one review per student', () => { P.submitFeedback(student.id, newId, { rating: 5, review: 'Great' }); P.submitFeedback(student.id, newId, { rating: 4, review: 'Good' }); eq(P.courseDetail(newId, student).reviews, 1); });
+t('manageUser deactivates and blocks login', () => { const v = P.registerUser({ name: 'Temp User', email: 'temp@x.com', password: 'Abcdef12', confirm: 'Abcdef12', role: 'student' }); P.manageUser(admin, v.id, 'deactivate'); throws(() => P.loginUser('temp@x.com', 'Abcdef12'), 'disabled'); P.manageUser(admin, v.id, 'activate'); eq(P.loginUser('temp@x.com', 'Abcdef12').id, v.id); });
+t('manageUser blocks self changes and unknown users', () => { throws(() => P.manageUser(admin, admin.id, 'delete'), 'own account'); throws(() => P.manageUser(admin, 99999, 'delete'), 'not found'); });
+t('manageUser deletes a user', () => { const v = P.registerUser({ name: 'Gone User', email: 'gone@x.com', password: 'Abcdef12', confirm: 'Abcdef12', role: 'tutor' }); P.manageUser(admin, v.id, 'delete'); eq(P.users().some(u => u.id === v.id), false); });
+t('reports and statistics are available', () => { eq(P.report('users').length > 10, true); eq(P.adminStats().courses >= 10, true); throws(() => P.report('nope'), 'Unknown'); });
+t('demo data includes 10 courses with lessons', () => eq(P.courses({}).length >= 10, true));
+
+console.log('\n' + pass + ' passed, ' + failN + ' failed');
+process.exit(failN ? 1 : 0);

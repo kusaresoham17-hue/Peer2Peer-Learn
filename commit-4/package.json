@@ -1,0 +1,10 @@
+{
+  "name": "peer2peer-learn",
+  "version": "1.0.0",
+  "description": "Peer2Peer Learn - minimalist peer-to-peer teaching platform (static site, no dependencies)",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/test.js"
+  },
+  "license": "MIT"
+}
